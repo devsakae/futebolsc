@@ -1,0 +1,231 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+.venv
+poetry.lock
+Pipfile.lock
+pyproject.toml
+mypy_cache/
+.dmypy.json
+dmypy.json
+pyre-checker-results/
+*.pyd
+*.pyo
+*.egg
+*.egg-info/
+dist/
+build/
+pip-wheel-metadata/
+share/python-wheels/
+
+# Scraped data and outputs
+scraped_data/
+*.csv
+*.json
+*.xlsx
+*.xls
+*.xml
+*.db
+*.sqlite
+*.sqlite3
+scraped_data_*.txt
+output/
+data/
+downloads/
+scraped_*.txt
+scraped_*.csv
+scraped_*.json
+results/
+
+# Logs
+logs/
+*.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+scraping_*.log
+scraper.log
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+docker-compose*.yaml
+.dockerignore
+.dockerenv
+.docker/
+docker-compose.override.yml
+!docker-compose.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-*
+/.vscode
+/.idea
+*.code-workspace
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.bak
+desktop.ini
+$RECYCLE.BIN/
+*.dll
+*.exe
+*.msi
+*.msm
+*.msp
+
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+pythonenv*
+virtualenv*
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+*.ipynb_checkpoints
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+test-results/
+junit/
+
+# Web scraping specific
+cookies.pkl
+cookies.txt
+session.pkl
+*.har
+*.warc
+*.warc.gz
+selenium/
+geckodriver.log
+chromedriver.log
+profiles/
+screenshots/
+debug.log
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.secrets
+config.local.yaml
+secrets.yaml
+credentials.json
+client_secret.json
+service_account.json
+
+# Cache files
+.cache/
+.cache-*
+.cached
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+
+# Selenium / WebDriver
+geckodriver
+chromedriver
+msedgedriver
+IEDriverServer
+driver/
+drivers/
+*.exe
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.pid
+*.seed
+*.pid.lock
+
+# Database files
+*.db
+*.sql
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Package manager files (if you choose to track them)
+# Uncomment if you want to track requirements
+# !requirements.txt
+# !requirements-*.txt
+
+# Docker volume mounts
+# Uncomment to exclude mounted volumes from git
+# mounted_volumes/
+# data_volumes/
+
+# Backup files
+*.backup
+*.bak
+backups/
+backup-*
+
+# SSL certificates
+*.pem
+*.crt
+*.key
+*.p12
+*.pfx
+
+# API keys and secrets
+*.key
+*.secret
+secrets/
+keys/
+
+# Large files (>100MB)
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+*.iso
+*.dmg
+*.pkg
+*.deb
+*.rpm
+
+# Documentation build
+docs/_build/
+site/
+public/
+frontend/
