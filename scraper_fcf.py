@@ -23,13 +23,13 @@ class Match:
         self.stadium = ""
         self.location = ""
         self.schedule = ""
-    
+
     def __setitem__(self, key, value):
         setattr(self, key, value)
-    
+
     def __str__(self):
         return f"Match(tournament={self.tournament}, date={self.date}, schedule={self.schedule} homeTeam={self.homeTeam}, homeLogo={self.homeLogo}, awayTeam={self.awayTeam}, awayLogo={self.awayLogo}, stadium={self.stadium}, location={self.location})"
-    
+
     def to_dict(self):
         return self.__dict__
 
@@ -90,7 +90,7 @@ class WebScraper:
             return
         finally:
             return None
-            
+
     def scrap_FCF_naoprofi(self):
         scrap_url = "https://fcf.com.br/competicoes/competicoes-nao-profissionais-" + str(self.year)
         try:
@@ -115,24 +115,24 @@ class WebScraper:
             if not tabela_url:
                 print("Não encontrou Tabela")
                 return
-            tabela_soup = self.scrape(tabela_url.get("href")) # type: ignore
-            tables_tabela = tabela_soup.find_all("table", { "class": "ReportTable" }) # type: ignore
+            tabela_soup = self.scrape(tabela_url.get("href"))
+            tables_tabela = tabela_soup.find_all("table", { "class": "ReportTable" })
             for idx, table in enumerate(tables_tabela):
                 if "Jogo: " in table.text:
-                    self.scrapped_match = Match() 
+                    self.scrapped_match = Match()
                     self.scrapped_match.tournament = tournament_name
                     match = self.handle_FCF_match(tables_tabela[idx:idx + 6])
                     for k, v in match.items():
                         self.scrapped_match[k] = v
-                    
-                    print(f"> Partida #{self.scrapped_match.fcf_id} em {self.scrapped_match.date}, {self.scrapped_match.homeTeam} vs {self.scrapped_match.awayTeam} - {self.scrapped_match.tournament}")
+
+                    print(f"[{self.scrapped_match.tournament}] Partida #{self.scrapped_match.fcf_id} em {self.scrapped_match.date}, {self.scrapped_match.homeTeam} {self.scrapped_match.homeScore} vs {self.scrapped_match.awayScore} {self.scrapped_match.awayTeam}")
                     this_match = { "tournament": self.scrapped_match.tournament, "homeTeam": self.scrapped_match.homeTeam, "awayTeam": self.scrapped_match.awayTeam, "fcf_id": self.scrapped_match.fcf_id }
                     this_update = { "$set": self.scrapped_match.to_dict() }
-                    result = self.collection.update_one(this_match, this_update, upsert=True) # type: ignore
+                    result = self.collection.update_one(this_match, this_update, upsert=True)
                     if result.upserted_id is not None:
-                        print(f"Document inserted with _id: {result.upserted_id}")
+                        print(f"Novo jogo! Salvo com id: {result.upserted_id}")
                     elif result.modified_count > 0:
-                        print(f"Document updated. Modified count: {result.modified_count}")
+                        print(f"Documento(s) atualizado(s): {result.modified_count}")
                     else:
                         print("Document found, but no changes were needed.")
         except Exception as e:
@@ -169,24 +169,18 @@ class WebScraper:
         home_logo_raw, away_logo_raw = td_logos
         match_object["homeLogo"] = home_logo_raw.get("src").split("?nocache")[0]
         match_object["awayLogo"] = away_logo_raw.get("src").split("?nocache")[0]
-        
+
         # parte 3
-        if datetime.strptime(match_object["date"], "%d/%m/%Y") < datetime.today():
-            match_scores = match_soup[vi].find_all("td")            
-            # match_object["homeScore"] = int(match_scores[1].text or 0)
-            # match_object["awayScore"] = int(match_scores[3].text or 0)
-            match_object["homeScore"] = 0 if match_scores[1].text.strip() == "" else int(match_scores[1].text)
-            match_object["awayScore"] = 0 if match_scores[3].text.strip() == "" else int(match_scores[3].text)
-        else:
-            match_object["homeScore"] = 0
-            match_object["awayScore"] = 0
-            
+        match_scores = match_soup[vi].find_all("td")
+        match_object["homeScore"] = int(match_scores[1].text) if isinstance(match_scores[1].text.strip(),int) else 0
+        match_object["awayScore"] = int(match_scores[3].text) if isinstance(match_scores[3].text.strip(),int) else 0
+
         # parte 4
         vi += 1
         match_names = match_soup[vi].find_all("td")
         match_object["homeTeam"] = match_names[1].text
         match_object["awayTeam"] = match_names[3].text
-        
+
         return match_object
 
 def main():
@@ -212,6 +206,6 @@ def main():
                     continue
             print("Iniciando SCRAP para", tournament["nome"], tournament["url"])
             scraper.scrap_FCF_competicao(tournament['url'], tournament['nome'])
-        
+
 if __name__ == "__main__":
     main()
