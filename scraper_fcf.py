@@ -8,6 +8,13 @@ from bson.objectid import ObjectId
 
 load_dotenv()
 
+def is_number(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
 class Match:
     def __init__(self) -> None:
         self.match_id = ObjectId()
@@ -172,8 +179,8 @@ class WebScraper:
 
         # parte 3
         match_scores = match_soup[vi].find_all("td")
-        match_object["homeScore"] = int(match_scores[1].text) if isinstance(match_scores[1].text.strip(),int) else 0
-        match_object["awayScore"] = int(match_scores[3].text) if isinstance(match_scores[3].text.strip(),int) else 0
+        match_object["homeScore"] = int(match_scores[1].text) if is_number(match_scores[1].text.strip()) else 0
+        match_object["awayScore"] = int(match_scores[3].text) if is_number(match_scores[3].text.strip()) else 0
 
         # parte 4
         vi += 1
