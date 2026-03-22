@@ -1,5 +1,5 @@
 # coding=iso-8859-1
-import requests, os, certifi, re, time
+import requests, os, certifi, re, time, sys
 from datetime import datetime
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -7,6 +7,9 @@ from pymongo.mongo_client import MongoClient
 from bson.objectid import ObjectId
 
 load_dotenv()
+
+my_db = os.getenv("FIRESTORE_URI")
+# my_db = os.getenv("MONGODB_URI")
 
 def is_number(s):
     try:
@@ -17,8 +20,7 @@ def is_number(s):
 
 class Match:
     def __init__(self) -> None:
-        self.match_id = ObjectId()
-        self.fcf_id = 0
+        self.match_id = 0
         self.tournament = ""
         self.date = ""
         self.homeTeam = ""
@@ -53,14 +55,13 @@ class WebScraper:
         self.lista = []
         # self.scrapped_match = Match() # type: ignore
         try:
-            self.client = MongoClient(os.getenv("MONGODB_URI"), tlsCAFile=certifi.where())
-            self.client.jogos.command('ping')
-            print("Conectado ao MongoDB!")
-            self.db_father = self.client["jogos"]
-            self.collection = self.client["jogos"]["fcf_sc_" + str(year)]
-            self.collection.create_index("match_id", unique=True, sparse=True)
+            self.client = MongoClient(my_db, tlsCAFile=certifi.where())
+            self.client.pyjogos.command('ping')
+            print("Conectado ao banco de dados!")
+            self.db_father = self.client["pyjogos"]
+            self.collection = self.client["pyjogos"]["fcf_sc_" + str(year)]
         except Exception as e:
-            print(f"Erro ao conectar MongoDB: {e}")
+            print(f"Erro ao conectar banco de dados: {e}")
             self.client = None
             self.db_father = None
             self.collection = None
@@ -94,8 +95,6 @@ class WebScraper:
                 self.lista_competicoes(torneio_data.text, torneio_data.get("href"))
         except Exception as e:
             print(f"Error scrap_FCF_profissional!", e)
-            return
-        finally:
             return None
 
     def scrap_FCF_naoprofi(self):
@@ -111,8 +110,6 @@ class WebScraper:
                 self.lista_competicoes(torneio_data.text, torneio_data.get("href"))
         except Exception as e:
             print(f"Error scrap_FCF!", e)
-            return
-        finally:
             return None
 
     def scrap_FCF_competicao(self, scrap_url, tournament_name):
@@ -132,8 +129,8 @@ class WebScraper:
                     for k, v in match.items():
                         self.scrapped_match[k] = v
 
-                    print(f"[{self.scrapped_match.tournament}] Partida #{self.scrapped_match.fcf_id} em {self.scrapped_match.date}, {self.scrapped_match.homeTeam} {self.scrapped_match.homeScore} vs {self.scrapped_match.awayScore} {self.scrapped_match.awayTeam}")
-                    this_match = { "tournament": self.scrapped_match.tournament, "homeTeam": self.scrapped_match.homeTeam, "awayTeam": self.scrapped_match.awayTeam, "fcf_id": self.scrapped_match.fcf_id }
+                    print(f"[{self.scrapped_match.tournament}] Partida #{self.scrapped_match.match_id} em {self.scrapped_match.date}, {self.scrapped_match.homeTeam} {self.scrapped_match.homeScore} vs {self.scrapped_match.awayScore} {self.scrapped_match.awayTeam}")
+                    this_match = { "tournament": self.scrapped_match.tournament, "homeTeam": self.scrapped_match.homeTeam, "awayTeam": self.scrapped_match.awayTeam, "match_id": int(self.scrapped_match.match_id) }
                     this_update = { "$set": self.scrapped_match.to_dict() }
                     result = self.collection.update_one(this_match, this_update, upsert=True)
                     if result.upserted_id is not None:
@@ -144,7 +141,6 @@ class WebScraper:
                         print("Document found, but no changes were needed.")
         except Exception as e:
             print(f"Error scrap_FCF_competicao:", e)
-        finally:
             return None
 
     def handle_FCF_match(self, match_soup):
@@ -158,8 +154,8 @@ class WebScraper:
             jFcfId = re.sub(r'[^\d]', '', match_data_arr[0]) or 0
             jDataA = match_data_arr[1].strip() or "Desconhecido"
             jDataB = match_data_arr[2].split("/")[1].strip()
-            jEstadio = "".join(match_data_arr[3:]).split("Estádio:")[1].strip() or "Desconhecido"
-            match_object["fcf_id"] = jFcfId
+            jEstadio = "".join(match_data_arr[3:]).split("Estádio:")[1].strip() or "0"
+            match_object["match_id"] = int(jFcfId)
             match_object["date"] = jDataA
             match_object["schedule"] = jDataB
             match_object["stadium"] = jEstadio
@@ -191,28 +187,34 @@ class WebScraper:
         return match_object
 
 def main():
-    scrap_year = input("Ano (ou enter para o atual): ")
-    scrap_year = datetime.today().year if scrap_year == "" else int(scrap_year)
-    scrap_one = input("Torneio específico? Insira URL caso sim: ")
-    if scrap_one:
-        scrap_tournament_name = ""
-        while scrap_tournament_name == "":
-            scrap_tournament_name = input("Nome do torneio: ")
-        scraper = WebScraper(scrap_year)
-        scraper.scrap_FCF_competicao(scrap_one, scrap_tournament_name)
+    scrap_year = datetime.today().year
+    if len(sys.argv) < 2:
+        scrap_year = input("Ano (ou enter para o atual): ")
+        scrap_year = datetime.today().year if scrap_year == "" else int(scrap_year)
+        scrap_one = input("Torneio específico? Insira URL caso sim: ")
+        if scrap_one:
+            scrap_tournament_name = ""
+            while scrap_tournament_name == "":
+                scrap_tournament_name = input("Nome do torneio: ")
+            scraper = WebScraper(scrap_year)
+            scraper.scrap_FCF_competicao(scrap_one, scrap_tournament_name)
+        else:
+            scrap_all = input("Scrap automático de todos os torneios (Y/n)? ")
+            scrap_all = scrap_all == "y" or scrap_all == ""
     else:
-        scrap_all = input("Scrap automático de todos os torneios (Y/n)? ")
-        scrap_all = scrap_all == "y" or scrap_all == ""
-        scraper = WebScraper(scrap_year)
-        scraper.scrap_FCF_profissional()
-        scraper.scrap_FCF_naoprofi()
-        for tournament in scraper.lista: # type: ignore
-            if not scrap_all:
-                scrap_this = input(f"Scrap {tournament["nome"]} - {tournament["url"]} (Y/n)? ")
-                if scrap_this != "y" and scrap_this != "":
-                    continue
-            print("Iniciando SCRAP para", tournament["nome"], tournament["url"])
-            scraper.scrap_FCF_competicao(tournament['url'], tournament['nome'])
+        scrap_year = int(sys.argv[1])
+    print(">>> scrapping year", scrap_year)
+    time.sleep(5)
+    scraper = WebScraper(scrap_year)
+    scraper.scrap_FCF_profissional()
+    scraper.scrap_FCF_naoprofi()
+    for tournament in scraper.lista: # type: ignore
+        if not scrap_all:
+            scrap_this = input(f"Scrap {tournament["nome"]} - {tournament["url"]} (Y/n)? ")
+            if scrap_this != "y" and scrap_this != "":
+                continue
+        print("Iniciando SCRAP para", tournament["nome"], tournament["url"])
+        scraper.scrap_FCF_competicao(tournament['url'], tournament['nome'])
 
 if __name__ == "__main__":
     main()
