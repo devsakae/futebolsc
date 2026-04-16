@@ -1,4 +1,6 @@
-beautifulsoup4==4.12.2
-requests==2.33.0
-pymongo==4.6.3
-python-dotenv==1.2.1
+functions-framework==3.*
+google-cloud-logging==3.*
+requests==2.*
+beautifulsoup4==4.*
+pymongo==4.*
+certifi

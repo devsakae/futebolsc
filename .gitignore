@@ -235,3 +235,5 @@ app/
 # Firebase
 functions/
 .firebaserc
+backup/
+TUTORIAL.md
