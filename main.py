@@ -1,236 +1,220 @@
 # coding=utf-8
-import os
-import re
-import sys
-import certifi
-import requests
-import functions_framework
-
+import os, sys, certifi, secrets, logging, functions_framework
+from functools import wraps
 from datetime import datetime
-from bs4 import BeautifulSoup
+from flask import Flask, request, jsonify
 from pymongo.mongo_client import MongoClient
+from flask_cors import CORS
+from dotenv import load_dotenv
 
-import google.cloud.logging as gcloud_logging
-import logging
-
-_gcloud_client = gcloud_logging.Client()
-_gcloud_client.setup_logging()
+# Configura log para Cloud Run/Functions
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
-MONGO_URI = os.environ.get("MONGO_URI", "")
+logger.info("Iniciando API FutebolSC")
 
-def is_number(s: str) -> bool:
-    try:
-        float(s)
-        return True
-    except ValueError:
-        return False
+try:
+    # Carrega variáveis do .env (se existirem localmente)
+    load_dotenv()
 
-class Match:
-    def __init__(self) -> None:
-        self.match_id   = 0
-        self.tournament = ""
-        self.date       = ""
-        self.homeTeam   = ""
-        self.homeLogo   = ""
-        self.homeScore  = 0
-        self.awayTeam   = ""
-        self.awayScore  = 0
-        self.awayLogo   = ""
-        self.stadium    = ""
-        self.location   = ""
-        self.schedule   = ""
+    app = Flask(__name__)
+    CORS(app) # Habilita CORS para todas as rotas
 
-    def __setitem__(self, key, value):
-        setattr(self, key, value)
+    # Configurações do Banco de Dados e Segurança
+    MONGO_URI = os.environ.get("MONGO_URI", "")
+    MASTER_ADMIN_TOKEN = os.environ.get("ACCESS_TOKEN", "")
 
-    def __str__(self):
-        return (
-            f"Match(tournament={self.tournament}, date={self.date}, "
-            f"schedule={self.schedule}, homeTeam={self.homeTeam}, "
-            f"awayTeam={self.awayTeam})"
-        )
+    if not MONGO_URI:
+        logger.error("ERRO: MONGO_URI não encontrada nas variáveis de ambiente.")
 
-    def to_dict(self):
-        return self.__dict__
+    def get_db():
+        client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
+        return client["pyjogos"]
 
+    def get_match_collection():
+        db = get_db()
+        year = datetime.today().year
+        return db[f"fcf_sc_{year}"]
 
-class WebScraper:
-    HEADERS = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/91.0.4472.124 Safari/537.36"
-        )
-    }
+    def get_token_collection():
+        db = get_db()
+        return db["tokens"]
 
-    def __init__(self, year: int):
-        self.year  = year
-        self.lista = []
-        self._connect_db()
+    def token_required(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            token = request.headers.get("x-access-token")
+            if not token:
+                return jsonify({"message": "Token is missing!"}), 401
+            
+            # Verifica se o token existe no banco de dados
+            tokens_col = get_token_collection()
+            token_doc = tokens_col.find_one({"token": token})
+            
+            if not token_doc:
+                return jsonify({"message": "Invalid or expired token!"}), 403
+                
+            return f(*args, **kwargs)
+        return decorated
 
-    def _connect_db(self):
-        try:
-            self.client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
-            self.client.pyjogos.command("ping")
-            logger.info("Conectado ao banco de dados!")
-            self.db_father  = self.client["pyjogos"]
-            self.collection = self.client["pyjogos"][f"fcf_sc_{self.year}"]
-        except Exception as exc:
-            logger.error("Erro ao conectar banco de dados! %s", exc)
-            self.client     = None
-            self.db_father  = None
-            self.collection = None
+    def format_match(match):
+        if "_id" in match:
+            match["_id"] = str(match["_id"])
+        return match
 
-    def scrape(self, url: str) -> BeautifulSoup | None:
-        try:
-            resp = requests.get(url, headers=self.HEADERS, timeout=15)
-            resp.raise_for_status()
-            return BeautifulSoup(resp.text, "html.parser")
-        except requests.RequestException as exc:
-            logger.error("Erro ao fazer scrape de %s: %s", url, exc)
-            return None
-
-    def _add_competicao(self, nome: str, url: str):
-        self.lista.append({"nome": nome, "url": url})
-
-    def _scrap_lista(self, path_suffix: str, label: str):
-        url = f"https://fcf.com.br/competicoes/{path_suffix}-{self.year}"
-        try:
-            soup = self.scrape(url)
-            div  = soup.find("div", id="cb-content")          # type: ignore[union-attr]
-            items = div.find("article").find("ul").find_all("li")  # type: ignore[union-attr]
-            for torneio in items:
-                if torneio.find("ul"):
-                    continue
-                a = torneio.find("a")
-                self._add_competicao(a.text, a.get("href"))
-        except Exception as exc:
-            logger.error("Erro ao listar competições (%s): %s", label, exc)
-
-    def scrap_FCF_profissional(self):
-        self._scrap_lista("competicoes-profissionais", "profissionais")
-
-    def scrap_FCF_naoprofi(self):
-        self._scrap_lista("competicoes-nao-profissionais", "nao-profissionais")
-
-    def scrap_FCF_competicao(self, scrap_url: str, tournament_name: str):
-        if self.collection is None:
-            logger.error("no database connection - aborting scrap %s", tournament_name)
-            return
-        try:
-            soup = self.scrape(scrap_url)
-            tabela_tag = soup.find(  # type: ignore[union-attr]
-                "a", string=lambda t: t and t == "Tabela"
+    def sort_matches(matches):
+        def sort_key(m):
+            try:
+                date_obj = datetime.strptime(m.get("date", "01/01/1900"), "%d/%m/%Y")
+            except (ValueError, TypeError):
+                date_obj = datetime.min
+                
+            return (
+                date_obj,
+                m.get("schedule", ""),
+                m.get("tournament", ""),
+                m.get("homeTeam", ""),
+                m.get("awayTeam", "")
             )
-            if not tabela_tag:
-                logger.warning("[%s] Aba 'Tabela' não encontrada em %s", tournament_name, scrap_url)
-                return
+        return sorted(matches, key=sort_key)
 
-            tabela_soup = self.scrape(tabela_tag.get("href"))
-            tables = tabela_soup.find_all("table", {"class": "ReportTable"})  # type: ignore[union-attr]
+    @app.route("/", methods=["GET"])
+    def index():
+        return jsonify({
+            "status": "online",
+            "api": "Futebol SC API",
+            "auth": "Required (x-access-token header)",
+            "endpoints": {
+                "today_matches": "/matches/today",
+                "team_matches": "/matches/team/<name>",
+                "tournament_matches": "/matches/tournament/<name>",
+                "date_range": "/matches/team/<name>/range?start=YYYY-MM-DD&end=YYYY-MM-DD",
+                "teams": "/teams",
+                "tournaments": "/tournaments"
+            }
+        })
 
-            saved = updated = skipped = 0
-            for idx, table in enumerate(tables):
-                if "Jogo: " not in table.text:
-                    continue
-                self.scrapped_match = Match()
-                self.scrapped_match.tournament = tournament_name
-                match_data = self.handle_FCF_match(tables[idx : idx + 6])
-                for k, v in match_data.items():
-                    self.scrapped_match[k] = v
+    @app.route("/health", methods=["GET"])
+    def health():
+        return jsonify({"status": "online"})
 
-                logger.info(
-                    "[%s] Partida #%s em %s: %s %s x %s %s",
-                    self.scrapped_match.tournament,
-                    self.scrapped_match.match_id,
-                    self.scrapped_match.date,
-                    self.scrapped_match.homeTeam,
-                    self.scrapped_match.homeScore,
-                    self.scrapped_match.awayScore,
-                    self.scrapped_match.awayTeam,
-                )
+    @app.route("/tokens", methods=["POST"])
+    def create_token():
+        admin_token = request.headers.get("x-admin-token")
+        if not admin_token or admin_token != MASTER_ADMIN_TOKEN:
+            return jsonify({"message": "Admin access required!"}), 401
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({"message": "Invalid JSON body"}), 400
+            
+        owner = data.get("owner")
+        if not owner:
+            return jsonify({"message": "Owner (email) is required in JSON body"}), 400
+        
+        new_token = secrets.token_hex(24)
+        tokens_col = get_token_collection()
+        tokens_col.insert_one({
+            "token": new_token,
+            "owner": owner,
+            "created_at": datetime.utcnow()
+        })
+        
+        return jsonify({
+            "message": "Token created successfully",
+            "token": new_token,
+            "owner": owner
+        }), 201
 
-                query  = {
-                    "tournament": self.scrapped_match.tournament,
-                    "homeTeam":   self.scrapped_match.homeTeam,
-                    "awayTeam":   self.scrapped_match.awayTeam,
-                    "match_id":   int(self.scrapped_match.match_id),
-                }
-                update = {"$set": self.scrapped_match.to_dict()}
-                result = self.collection.update_one(query, update, upsert=True)
+    @app.route("/matches/today", methods=["GET"])
+    @token_required
+    def get_today_matches():
+        today_str = datetime.today().strftime("%d/%m/%Y")
+        collection = get_match_collection()
+        matches = list(collection.find({"date": today_str}))
+        sorted_results = sort_matches(matches)
+        return jsonify([format_match(m) for m in sorted_results])
 
-                if result.upserted_id is not None:
-                    logger.info("Novo jogo salvo com id: %s", result.upserted_id)
-                    saved += 1
-                elif result.modified_count > 0:
-                    logger.info("Jogo atualizado (modified_count=%s)", result.modified_count)
-                    updated += 1
-                else:
-                    skipped += 1
+    @app.route("/matches/team/<team_name>", methods=["GET"])
+    @token_required
+    def get_team_matches(team_name):
+        collection = get_match_collection()
+        query = {
+            "$or": [
+                {"homeTeam": {"$regex": team_name, "$options": "i"}},
+                {"awayTeam": {"$regex": team_name, "$options": "i"}}
+            ]
+        }
+        matches = list(collection.find(query))
+        sorted_results = sort_matches(matches)
+        return jsonify([format_match(m) for m in sorted_results])
 
-            logger.info(
-                "[%s] Finished! new: %d, updated: %d, no changes: %d",
-                tournament_name, saved, updated, skipped,
-            )
-        except Exception as exc:
-            logger.error("Erro em scrap_FCF_competicao(%s): %s", tournament_name, exc, exc_info=True)
+    @app.route("/matches/tournament/<path:tournament_name>", methods=["GET"])
+    @token_required
+    def get_tournament_matches(tournament_name):
+        collection = get_match_collection()
+        matches = list(collection.find({"tournament": {"$regex": tournament_name, "$options": "i"}}))
+        sorted_results = sort_matches(matches)
+        return jsonify([format_match(m) for m in sorted_results])
 
-    def handle_FCF_match(self, match_soup) -> dict:
-        vi = 0
-        obj: dict = {}
+    @app.route("/matches/team/<team_name>/range", methods=["GET"])
+    @token_required
+    def get_team_matches_range(team_name):
+        start_str = request.args.get("start")
+        end_str = request.args.get("end")
+        if not start_str or not end_str:
+            return jsonify({"error": "Parâmetros 'start' e 'end' são obrigatórios (YYYY-MM-DD)."}), 400
+        try:
+            start_date = datetime.strptime(start_str, "%Y-%m-%d")
+            end_date = datetime.strptime(end_str, "%Y-%m-%d")
+        except ValueError:
+            return jsonify({"error": "Formato de data inválido. Use YYYY-MM-DD."}), 400
 
-        # parte 1 ? cabeçalho com id, data, estádio, local
-        for tr in match_soup[vi].find_all("tr"):
-            raw, location = tr.text.split("  /")
-            parts = raw.split("-")
-            obj["match_id"]  = int(re.sub(r"[^\d]", "", parts[0]) or 0)
-            obj["date"]      = parts[1].strip()
-            obj["schedule"]  = parts[2].split("/")[1].strip()
-            obj["stadium"]   = "".join(parts[3:]).split("Estádio:")[1].strip()
-            obj["location"]  = location.strip()
+        collection = get_match_collection()
+        query = {
+            "$or": [
+                {"homeTeam": {"$regex": team_name, "$options": "i"}},
+                {"awayTeam": {"$regex": team_name, "$options": "i"}}
+            ]
+        }
+        all_team_matches = list(collection.find(query))
+        filtered_matches = []
+        for m in all_team_matches:
+            try:
+                match_date = datetime.strptime(m["date"], "%d/%m/%Y")
+                if start_date <= match_date <= end_date:
+                    filtered_matches.append(m)
+            except (ValueError, KeyError, TypeError):
+                continue
+        sorted_results = sort_matches(filtered_matches)
+        return jsonify([format_match(m) for m in sorted_results])
 
-        # parte 2 ? logos
-        vi += 1
-        logos = match_soup[vi].find_all("img")
-        while not logos:
-            vi += 1
-            logos = match_soup[vi].find_all("img")
-            if vi > 5:
-                raise RuntimeError("no logos! verify match")
-        home_logo, away_logo = logos
-        obj["homeLogo"] = home_logo.get("src").split("?nocache")[0]
-        obj["awayLogo"] = away_logo.get("src").split("?nocache")[0]
+    @app.route("/tournaments", methods=["GET"])
+    @token_required
+    def list_tournaments():
+        collection = get_match_collection()
+        tournaments = collection.distinct("tournament")
+        return jsonify(tournaments)
 
-        # parte 3 ? placar
-        tds = match_soup[vi].find_all("td")
-        obj["homeScore"] = int(tds[1].text) if is_number(tds[1].text.strip()) else 0
-        obj["awayScore"] = int(tds[3].text) if is_number(tds[3].text.strip()) else 0
+    @app.route("/teams", methods=["GET"])
+    @token_required
+    def list_teams():
+        collection = get_match_collection()
+        home_teams = collection.distinct("homeTeam")
+        away_teams = collection.distinct("awayTeam")
+        unique_teams = sorted(list(set(home_teams + away_teams)))
+        return jsonify(unique_teams)
 
-        # parte 4 ? nomes
-        vi += 1
-        names = match_soup[vi].find_all("td")
-        obj["homeTeam"] = names[1].text
-        obj["awayTeam"] = names[3].text
+    # --- Entry Point para Google Cloud Functions ---
+    @functions_framework.http
+    def api_handler(request):
+        with app.request_context(request.environ):
+            return app.full_dispatch_request()
 
-        return obj
+except Exception as e:
+    logger.error(f"FALHA CRÍTICA NO CARREGAMENTO DA API: {str(e)}")
+    raise e
 
-@functions_framework.cloud_event
-def run_scraper(cloud_event):
-    year = datetime.today().year
-    logger.info("=== starting Scraper FCF-SC for year %d ===", year)
-
-    scraper = WebScraper(year)
-    scraper.scrap_FCF_profissional()
-    scraper.scrap_FCF_naoprofi()
-
-    logger.info("tournaments found: %d", len(scraper.lista))
-
-    for tournament in scraper.lista:
-        nome = tournament["nome"]
-        url  = tournament["url"]
-        logger.info("Scraping: %s ? %s", nome, url)
-        scraper.scrap_FCF_competicao(url, nome)
-
-    logger.info("=== finished Scraper FCF-SC ===")
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port, debug=True)

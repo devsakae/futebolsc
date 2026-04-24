@@ -1,6 +1,11 @@
 functions-framework==3.*
 google-cloud-logging==3.*
+google-cloud-firestore==2.*
 requests==2.*
 beautifulsoup4==4.*
 pymongo==4.*
 certifi
+flask
+flask-cors
+python-dotenv
+gunicorn
