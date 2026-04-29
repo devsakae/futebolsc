@@ -138,6 +138,7 @@ try:
     @app.route("/matches/team/<team_name>", methods=["GET"])
     @token_required
     def get_team_matches(team_name):
+        logger.info(f"Endpoint /matches/team/ chamado para: {team_name}")
         collection = get_match_collection()
         query = {
             "$or": [
@@ -146,6 +147,7 @@ try:
             ]
         }
         matches = list(collection.find(query))
+        logger.info(f"Encontradas {len(matches)} partidas para {team_name}")
         sorted_results = sort_matches(matches)
         return jsonify([format_match(m) for m in sorted_results])
 
@@ -160,6 +162,7 @@ try:
     @app.route("/matches/team/<team_name>/range", methods=["GET"])
     @token_required
     def get_team_matches_range(team_name):
+        logger.info(f"Endpoint /matches/team/range chamado para: {team_name}")
         start_str = request.args.get("start")
         end_str = request.args.get("end")
         if not start_str or not end_str:

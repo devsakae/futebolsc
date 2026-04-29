@@ -230,7 +230,6 @@ site/
 public/
 frontend/
 meutimenarede/
-app/
 
 # Firebase
 functions/
